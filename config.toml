@@ -1,0 +1,32 @@
+folder = "results/experiment_phaseonium_01"
+description = "Experiment 2 - Probe Phaseonium temperature"
+
+[system]
+type = "Qubit"
+ndims = 2
+excitations = 0  # Number of excitations to separate ground and excited states
+frequency = 1.0  # System frequency
+# gamma = 0.1  # System decay rate
+thermalization_time = 100
+
+[environment]
+g = 1.0  # Environment energy level splitting
+J = 1.0  # System-Environment coupling
+gamma = 1.0  # Environment decay rate
+
+[ancilla]
+type = "Phaseonium"
+ndims = 3
+excitations = 0
+coherences = 0.1
+chains = 2  # Number of ancilla chains
+layers = 2  # Number of ancillas per chain
+frequency = 1.0  # Ancillas frequency
+g = 1.0  # Ancilla-Ancilla interaction strength
+intra_interaction_time =  1.570796326  # Ancilla-Ancilla interaction time
+collision_time = 0.031415926  # Ancilla-System interaction time
+
+[thermometer]
+T_min = 0.002  # Minimum temperature
+T_max = 2.0  # Maximum temperature
+accuracy = 100  # Number of temperatures to scan
