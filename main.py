@@ -2,6 +2,13 @@
 Script to calculate the Quantum Fisher Information,
 using a cross-correlated collisional framework of measurements.
 
+It generates simulations based on the config.toml file located in the root directory.
+If the config file presents lists of parameters, the script iterates through all of them,
+creating unique ids and folders to differentiate them.
+Some parameter can be overridden via command line arguments.
+
+Results are saved in the directory specified in the config file, and in the case of multiple parameters,
+in subdirectories identified by the ids of each parameter iteration.
 ___________
 References
 [1] Seah, S., Nimmrichter, S., Grimmer, D., Santos, J. P., Scarani, V., & Landi, G. T. (2019). Collisional quantum thermometry. Physical review letters, 123(18), 180602.
