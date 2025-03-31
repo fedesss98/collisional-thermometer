@@ -1,6 +1,6 @@
 """
 Script to calculate the Quantum Fisher Information,
-using a cross-correlated collisional framework of measurements.
+using a cross-correlated collisional framework of measurements [1].
 
 It generates simulations based on the config.toml file located in the root directory.
 If the config file presents lists of parameters, the script iterates through all of them,
@@ -11,16 +11,19 @@ Results are saved in the directory specified in the config file, and in the case
 in subdirectories identified by the ids of each parameter iteration.
 ___________
 References
-[1] Seah, S., Nimmrichter, S., Grimmer, D., Santos, J. P., Scarani, V., & Landi, G. T. (2019). Collisional quantum thermometry. Physical review letters, 123(18), 180602.
+[1] Mendonça, T. M., Soares-Pinto, D. O., & Paternostro, M. (2024). Information flow-enhanced precision in collisional quantum thermometry. arXiv preprint arXiv:2407.21618.
+[2] Seah, S., Nimmrichter, S., Grimmer, D., Santos, J. P., Scarani, V., & Landi, G. T. (2019). Collisional quantum thermometry. Physical review letters, 123(18), 180602.
 """
 
-from src.utils import read_configuration
+from src.utils import read_configuration, create_multiindex_dataframe
 from src.physics import PhysicsObject
+from src.time_evolutions import thermalize_system, measure_system
+from src.quantum_fisher_information import compute_fisher_information
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import qutip
-from pathlib import Path
 from tqdm import tqdm
 
 import argparse
@@ -31,17 +34,10 @@ KBOLTZMANN = 1.0
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Calculate Quantum Information Measures for a given quantum state.')
     parser.add_argument('--chains', '-k', type=str, help='Number of interacting ancilla chains.')
-    parser.add_argument('--depth', '-n', type=int, help='Number of ancillas in each chain.')
+    parser.add_argument('--layers', '-n', type=int, help='Number of ancillas in each chain.')
+    parser.add_argument('--plot', '-p', action='store_true', help='Show the comparison of QFI from the last ancilla of every chain (default: Flase).')
 
     return parser.parse_args()
-
-
-def initialize_physics():
-    """Initialize the physical parameters of the system."""
-    return {
-        'omega_S': 1.0,  # System frequency
-        
-    }
 
 
 def create_systems(physics: PhysicsObject, k):
@@ -57,127 +53,29 @@ def create_systems(physics: PhysicsObject, k):
     return system, ancillas
 
 
-def boltzmann_distribution(omega, T: float):
-    """Calculate the Boltzmann distribution for a given frequency and temperature."""
-    return 1/(np.exp(omega/T) - 1)
+def iterate_qfi_computations(states, dt):
+    state_variations = np.diff(states, axis=0)  # Compute finite differential
+    variables = zip(states, state_variations)
+    return np.array([compute_fisher_information(state, ds, dt) for state, ds in variables])
 
 
-def thermalize_system(system, temp, t, physics: PhysicsObject):
-    """Thermalize the system with the environment."""
-    tspan = np.linspace(0, t, 100)
-    n_th = boltzmann_distribution(physics.system.frequency, temp)
-    jump_operators = physics.jump_operators(n_th)
+def plot_qfi(df, chains, n, show=False, folder=None, compare=None):
+    """Plot the Quantum Fisher Information for the last layer of ancillas."""
+    idx = pd.IndexSlice
+    # Take the last layer of the chain
+    data_to_plot = df.iloc[:, -1]
+    x = data_to_plot.index.get_level_values(0).unique()  # Temperatures
+    ys = [data_to_plot.loc[idx[:, i],].values for i in range(chains)]
 
-    rho_evolution = qutip.mesolve(
-        physics.system.hamiltonian, system, tspan, jump_operators)
-    
-    return rho_evolution.final_state
-
-
-def add_ancilla(rho, ancilla, t, physics: PhysicsObject):
-    """
-    Add an ancilla to the collective state. If this is not the first ancilla of the layer,
-    information from the previous ancilla is gathered via an interaction.
-    """
-    tspan = np.linspace(0, t, 100)
-    subsystems = len(rho.dims[0])
-    # Take together the ancilla and the previous correlated state
-    rho = qutip.tensor(rho, ancilla)
-    # Check if the state comprises only the system or other ancillas
-    if subsystems > 1:
-        # Activate the exchange interaction
-        h_exchange = physics.exchange_hamiltonian
-        # Extend the Hilbert space to include previous subsystems
-        system_dimension = qutip.qeye(physics.ndims)
-        h_exchange = qutip.tensor(system_dimension, *[qutip.qeye(2) for _ in range(subsystems-2)], h_exchange)
-        rho_evolution = qutip.mesolve(
-            h_exchange, rho, tspan)
-    
-        rho = rho_evolution.final_state
-
-    return rho
-
-
-def collision_evolution(rho, t, physics: PhysicsObject):
-    """Evolve the collective state following a System-Ancilla collision"""
-    tspan = np.linspace(0, t, 100)
-    subsystems = len(rho.dims[0])
-    # Extend the Hilbert space of the system to include all ancillas
-    h_s = physics.extend_hs(subsystems)
-    h_a = physics.extend_ha(subsystems)
-    h_int = physics.interaction_hamiltonian(subsystems)
-    rho_evolution = qutip.mesolve(
-        h_s + h_a + h_int, rho, tspan)
-    
-    return rho_evolution.final_state
-
-
-def measure_system(rho, ancillas, collision_time, p, pbar: tqdm) -> qutip.Qobj:
-    """
-    Get information on the System via Ancilla measurements.
-    The System collide with each Ancilla in each layer 
-    and each ancilla collide with the next one.
-    """    
-    for j, ancilla in enumerate(ancillas):
-        # Now the Hilbert space get bigger and bigger
-        # A new Ancilla is added and it gather information from the previous Ancilla
-        if j == 0:
-            pbar.set_description(f"Composing System with first Ancilla")
-        else:
-            pbar.set_description(f"Passing information to Ancilla {j+1}")
-        
-        rho = add_ancilla(rho, ancilla, collision_time, p)
-        # The Ancilla is now part of the collective state
-        # Evolve the collective state with the collision Hamiltonian
-        pbar.set_description(f"Collision with Ancilla {j+1}")
-        rho = collision_evolution(rho, collision_time, p)
-
-    # Trace out Ancillas
-    system = rho.ptrace(0)
-
-    return system
-
-
-def thermal_fisher_information(ancilla, T):
-    """
-    Compute the thermal Fisher Information that bounds our QFI by the Cramér-Rao inequality.
-    This depends only on the measurement system (ancillas) and the temperature.
-    See [1]
-    """
-    c = ancilla.heat_capacity(T)
-    return c / T**2
-
-
-def compute_fisher_information(dS, dT, rho):
-    """Compute the Quantum Fisher Information."""
-    # Compute the derivative of the System state with respect to the temperature
-    dr = qutip.Qobj(dS / dT)
-    rho = qutip.Qobj(rho)
-
-    # Compute the Quantum Fisher Information
-    ndims = rho.shape[0]
-    qfi = []
-    for n, m in zip(range(ndims), range(ndims)):
-        # Compute expectation values
-        psi_n = qutip.basis(ndims, n)
-        psi_m = qutip.basis(ndims, m)
-        rho_n = qutip.expect(rho, psi_n)
-        rho_m = qutip.expect(rho, psi_m)
-        dr_nm = qutip.expect(dr, psi_n * psi_m.dag())
-        # Use the formula (13) from the paper
-        if rho_n + rho_m != 0:
-            qfi.append(2 * dr_nm**2 / (rho_n + rho_m))
-
-    return sum(qfi)
-
-
-def plot_qfi(temperature_range, qfi_values, chains, n, folder=None, compare=None):
-    """Plot the Quantum Fisher Information."""
     fig, ax = plt.subplots(figsize=(8, 6), layout='tight')
-    ax.plot(temperature_range, qfi_values, linewidth=1, marker='o', markersize=4, label="QFI")
+
+    for k in range(chains):
+        ax.plot(x, ys[k], linewidth=1, marker='o', markersize=4, label=f"k={k+1}")
+    
     ax.set_xlabel('Temperature (K)')
     ax.set_ylabel('QFI')
     ax.set_title('Quantum Fisher Information')
+    fig.legend()
 
     ax.text(0.8, 0.9, f"k = {chains} / n = {n}", transform=ax.transAxes,
             fontsize=12,
@@ -185,79 +83,102 @@ def plot_qfi(temperature_range, qfi_values, chains, n, folder=None, compare=None
     
     if compare is not None:
         # Add a reference series to compare with
-        ax.plot(temperature_range, compare, 'r--', linewidth=1, label="Reference QFI")
-        fig.legend()
+        ax.plot(x, compare, 'r--', linewidth=1, label="Reference QFI")
+    
 
     # Save the plot
     if folder is not None:
         fig.savefig(folder / 'img/qfi.png')
         fig.savefig(folder / 'img/qfi.eps')
 
-    plt.show()
+    # Don't show the plot to let the code running
+    if show:
+        plt.show()
+    
+    return None
 
 
+def main(args=None):
+    # Read configuration and parse the arguments in it
+    configs = read_configuration(args)
 
-def main(args):
-    # Parse the arguments
-    config, root = read_configuration(args)
+    # Iterate over all sets of configuration parameters
+    for config, results_folder in configs:
+        p = PhysicsObject(config)
 
-    p = PhysicsObject(config)
+        # Create the range of Temperatures to scan
+        tmin = config['thermometer']['T_min']
+        tmax = config['thermometer']['T_max']
+        samples = config['thermometer']['accuracy']
+        temperature_range = np.linspace(tmin, tmax, samples)
 
-    # Create the range of Temperatures to scan
-    temperature_range = np.linspace(
-        config['thermometer']['T_min'], 
-        config['thermometer']['T_max'], 
-        config['thermometer']['accuracy'])
-
-    # Average thermalization time for each possible temperature
-    thermalization_time = config['system']['thermalization_time']
-    # Interactions with the Ancillas
-    chains = config['ancilla']['chains']
-    iterations = config['ancilla']['layers']
-    collision_time = config['ancilla']['collision_time']
-
-    # Create the system and the first layer of ancillas
-    system, ancillas = create_systems(p, config['ancilla']['chains'])
-
-    systems = []
-    pbar = tqdm(temperature_range)  # Progress bar to show the code running
-
-    for i, temperature in enumerate(pbar):
-        pbar.set_description(f"Temperature: {temperature:.2f} K")
-
-        pbar_child = tqdm(range(iterations), leave=False)
-        for n in pbar_child:
-            system = thermalize_system(system, temperature, thermalization_time, p)
-            # Use the collisional framework to measure the System
-            system = measure_system(system, ancillas, collision_time, p, pbar_child)
-
-        # Save the System state after the Ancilla measurements
-        systems.append(system.full())  # Save the state as a numpy array
+        # Average thermalization time for each possible temperature
+        thermalization_time = config['system']['thermalization_time']
+        # Interactions with the Ancillas
+        chains = config['ancilla']['chains']
+        iterations = config['ancilla']['layers']
+        collision_time = config['ancilla']['collision_time']
         
-        # Close the progress bar
-        pbar_child.close()
-    
-    pbar.close()
+        print(f"Running simulation with {chains} chains of {iterations} ancillas")
+        
+        # Create the system and the first layer of ancillas
+        system, ancillas = create_systems(p, config['ancilla']['chains'])
 
-    # Compute the change in the state with respect to the change in temperature
-    system_variations = np.diff(systems, axis=0)
-    temperature_variations = np.diff(temperature_range)
+        system_evolution = {}
+        ancillas_evolution = {}
+        pbar = tqdm(temperature_range)  # Progress bar to show the code running
 
-    # Calculate the Quantum Fisher Information for every temperature change
-    qfi_values = []
-    for i, dT in enumerate(temperature_variations):
-        dS = system_variations[i]
-        qfi = compute_fisher_information(dS, dT, systems[i+1])
-        qfi_values.append(qfi)
-    
-    # Calculate the Thermal Fisher Information given by the Cramer-Rao inequality
-    tfi_values = [thermal_fisher_information(p.ancilla, T) for T in temperature_range[1:]]
+        for i, temperature in enumerate(pbar):
+            pbar.set_description(f"Temperature: {temperature:.2f} K")
 
-    # Plot the Quantum Fisher Information
-    plot_qfi(temperature_range[1:], qfi_values, chains, n, root, compare=tfi_values)
+            system_evolution[temperature] = []
+            ancillas_evolution[temperature] = []
+ 
+            pbar_child = tqdm(range(iterations), leave=False)
+            for n in pbar_child:
+                system = thermalize_system(system, temperature, thermalization_time, p)
+                # Use the collisional framework to measure the System
+                system, layer_ancillas = measure_system(system, ancillas, collision_time, p, pbar_child)
 
+                # Save the System state after the Ancilla measurements
+                system_evolution[temperature].append(system)  # Save the state as a numpy array
+                ancillas_evolution[temperature].append(layer_ancillas)
 
+            # Close the progress bar
+            pbar_child.close()
+        
+        pbar.close()
 
+        # Save evolution of the states
+        qutip.qsave(system_evolution, f"{results_folder}/system_evolution")
+        qutip.qsave(ancillas_evolution, f"{results_folder}/ancillas_evolution")
+
+        # Calculate the Quantum Fisher Information for every temperature change and for every ancilla
+        dT = (tmax - tmin) / samples
+        # Go through all the saved states to compute Quantum Fisher Information
+        qfi_systems = {}
+        qfi_ancillas = {}
+        system_evolution = np.array(list(system_evolution.values()))
+        ancillas_evolution = np.array(list(ancillas_evolution.values()))
+        for n in range(iterations):
+            systems = system_evolution[:, n]
+            derivatives = np.diff(systems, axis=0) / dT
+            qfi_systems[n] = [compute_fisher_information(s, ds) for s, ds in zip(systems, derivatives)]
+            ancillas = ancillas_evolution[:, n]
+            derivatives = np.diff(ancillas, axis=0) / dT
+            qfi_ancillas[n] = [
+                [compute_fisher_information(a, da) for a, da in zip(ancillas[:, k], derivatives[:, k])] 
+                for k in range(chains)]
+        
+        # Save Quantun Fisher Information in Pickle format
+        qfi_systems = pd.DataFrame(qfi_systems)
+        qfi_systems.to_pickle(results_folder / "qfi_systems.pickle")
+        qfi_ancillas = create_multiindex_dataframe(np.array(list(qfi_ancillas.values())))
+        qfi_ancillas.to_pickle(results_folder / "qfi_ancillas.pickle")
+
+        # Standard plot of QFI vs T for the last layer of ancillas
+        plot_qfi(qfi_ancillas, chains, iterations, show=args.plot,folder=results_folder)
+        print(f"Done!\nFile saved in {results_folder}")
 
 
 if __name__ == '__main__':
