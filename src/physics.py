@@ -10,7 +10,7 @@ class PhysicsObject:
         self.system_type = config['system']['type']
         self.ndims = config['system']['ndims']
         self.system = config['system']
-        self.ancilla = Qubit(2, 1, config['ancilla']['frequency'], "Ancilla")
+        self.ancilla = config['ancilla']
 
         self.environment_coupling = config['environment']['g']
         self.ancillas_coupling = config['ancilla']['g']
@@ -20,6 +20,10 @@ class PhysicsObject:
     @property
     def system(self):
         return self._system
+    
+    @property
+    def ancilla(self):
+        return self._ancilla
 
     @system.setter
     def system(self, config):
@@ -29,11 +33,27 @@ class PhysicsObject:
 
         if self.system_type == "Qubit":
             self._system = Qubit(ndims, excitations, frequency, "Qubit")
-        elif self.system_type == "Cavity" or self.system_type == "Field":
+        elif self.system_type in ["Cavity", "Field"]:
             self._system = Field(ndims, excitations, frequency, "Field")
         elif self.system_type == "Phaseonium":
             coherences = config['coherences']
             self._system = Phaseonium(ndims, excitations, frequency, coherences, "Phaseonium")
+        else:
+            raise ValueError(f"Cannot use System of type {self.system_type}")
+        
+    @ancilla.setter
+    def ancilla(self, config):
+        excitations = config['excitations']
+        ndims = config['ndims']
+        frequency = config['frequency']
+
+        if self.system_type == "Qubit":
+            self._ancilla = Qubit(ndims, excitations, frequency, "Qubit")
+        elif self.system_type in ["Cavity", "Field"]:
+            self._ancilla = Field(ndims, excitations, frequency, "Field")
+        elif self.system_type == "Phaseonium":
+            coherences = config['coherences']
+            self._ancilla = Phaseonium(ndims, excitations, frequency, coherences, "Phaseonium")
         else:
             raise ValueError(f"Cannot use System of type {self.system_type}")
 
@@ -58,15 +78,15 @@ class PhysicsObject:
     def extend_hs(self, subsystems):
         """Extend the Hilbert space of the System to include all ancillas"""
         extended_dimension = [qt.qeye(2) for _ in range(subsystems - 1)]
-        hs = qt.tensor(self.system.hamiltonian, *extended_dimension)
-        return hs
+        return qt.tensor(self.system.hamiltonian, *extended_dimension)
     
     def extend_ha(self, subsystems):
         """Extend the Hilbert space of the Ancilla to include all previous subsystems"""
         system_dimension = qt.qeye(self.ndims)
         extended_dimension = [qt.qeye(2) for _ in range(subsystems - 2)]
-        ha = qt.tensor(system_dimension, *extended_dimension, self.ancilla.hamiltonian)
-        return ha
+        return qt.tensor(
+            system_dimension, *extended_dimension, self.ancilla.hamiltonian
+        )
     
     def interaction_hamiltonian(self, subsystems):
         """Return the interaction Hamiltonian between the System and the Ancilla"""
@@ -78,8 +98,7 @@ class PhysicsObject:
             self.system.destroy_operator, 
             *[qt.qeye(2) for _ in range(subsystems - 2)],
             self.ancilla.create_operator)
-        h_int = self.ancillas_coupling * (jump_up + jump_down)
-        return h_int
+        return self.ancillas_coupling * (jump_up + jump_down)
 
    
 
