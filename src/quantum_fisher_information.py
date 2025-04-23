@@ -8,6 +8,7 @@ References
 
 from itertools import product
 import qutip
+import numpy as np
 
 
 def thermal_fisher_information(ancilla, T):
@@ -36,4 +37,4 @@ def compute_fisher_information(rho: qutip.Qobj, dr: qutip.Qobj):
         if rho_n + rho_m != 0:
             qfi += 2 * dr_nm**2 / (rho_n + rho_m)
 
-    return qfi
+    return np.real(qfi)

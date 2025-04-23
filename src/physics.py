@@ -9,6 +9,7 @@ class PhysicsObject:
     def __init__(self, config):
         """Initialize variables given the configuration dictionary."""
         self.system_type = config['system']['type']
+        self.ancilla_type = config['ancilla']['type']
         self.ndims = config['system']['ndims']
         self.system = config['system']
         self.ancilla = config['ancilla']
@@ -51,11 +52,11 @@ class PhysicsObject:
         ndims = config['ndims']
         frequency = config['frequency']
 
-        if self.system_type == "Qubit":
+        if self.ancilla_type == "Qubit":
             self._ancilla = Qubit(ndims, excitations, frequency, "Qubit")
-        elif self.system_type in ["Cavity", "Field"]:
+        elif self.ancilla_type in ["Cavity", "Field"]:
             self._ancilla = Field(ndims, excitations, frequency, "Field")
-        elif self.system_type == "Phaseonium":
+        elif self.ancilla_type == "Phaseonium":
             coherences = config['coherences']
             self._ancilla = Phaseonium(ndims, excitations, frequency, coherences, "Phaseonium")
         else:

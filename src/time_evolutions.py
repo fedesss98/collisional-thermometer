@@ -20,7 +20,7 @@ def collision_evolution(rho, t, physics: PhysicsObject):
     return rho_evolution.final_state
 
 
-def measure_system(rho, ancillas, collision_time, p, pbar: tqdm = None) -> qutip.Qobj:
+def measure_system(rho, ancillas, exchange_time, collision_time, p, pbar: tqdm = None) -> qutip.Qobj:
     """
     Get information on the System via Ancilla measurements.
     The System collide with each Ancilla in each layer 
@@ -34,7 +34,7 @@ def measure_system(rho, ancillas, collision_time, p, pbar: tqdm = None) -> qutip
         else:
             pbar.set_description(f"Passing information to Ancilla {j+1}")
         
-        rho = add_ancilla(rho, ancilla, collision_time, p)
+        rho = add_ancilla(rho, ancilla, exchange_time, p)
         # The Ancilla is now part of the collective state
         # Evolve the collective state with the collision Hamiltonian
         if pbar is not None:
