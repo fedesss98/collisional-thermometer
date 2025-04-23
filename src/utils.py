@@ -11,7 +11,7 @@ import hashlib
 
 
 def setup_results_folder(config):
-    results_folder = Path(config['meta']['folder'])
+    results_folder = Path(config['meta']['folder']) / config['id']
     results_folder.mkdir(parents=True, exist_ok=True)
     images_folder = results_folder / 'img'
     images_folder.mkdir(parents=True, exist_ok=True)
@@ -21,6 +21,25 @@ def setup_results_folder(config):
         toml.dump(config, f)
 
     return results_folder
+
+
+def look_for_incomplete(root):
+    """Looks for folders in the root directory with a configuration file but no qfi results"""
+    root = Path(root)
+    dirs_to_do = []
+
+    for dir in root.iterdir():
+        try:
+            qfi = pd.read_pickle(dir / "last_ancilla_qfi.pickle")
+        except FileNotFoundError:
+            qfi = None
+
+        if qfi is None:
+            with open(dir / "config.toml", "r") as f:
+                config = toml.load(f)
+            results_folder = Path(dir)
+            dirs_to_do.append((config, results_folder))
+    return dirs_to_do
 
 
 def read_configuration(args=None):
@@ -49,33 +68,34 @@ def read_configuration(args=None):
         results_folder = setup_results_folder(config)
 
         configs = [(config, results_folder)]
-    
-    # Generate Cartesian product of all parameter combinations
-    param_combinations = list(product(*param_values))
-    configs = []
-    for combination in param_combinations:
-        new_config = copy.deepcopy(config)
-        for i, (section, key) in enumerate(param_keys):
-            new_config[section][key] = combination[i]
-            
-        # Generate a unique ID for this configuration
-        config_id = hashlib.md5(str(combination).encode()).hexdigest()[:8]
-        new_config['id'] = config_id
+    else:
+        # Generate Cartesian product of all parameter combinations
+        param_combinations = list(product(*param_values))
+        configs = []
+        for combination in param_combinations:
+            new_config = copy.deepcopy(config)
+            for i, (section, key) in enumerate(param_keys):
+                new_config[section][key] = combination[i]
+                
+            # Generate a unique ID for this configuration
+            config_id = hashlib.md5(str(combination).encode()).hexdigest()[:10]
+            new_config['id'] = config_id
 
-        # Create the folder to store the results for this configuration
-        results_folder = setup_results_folder(new_config)
-        configs.append((new_config, results_folder))
+            # Create the folder to store the results for this configuration
+            results_folder = setup_results_folder(new_config)
+            configs.append((new_config, results_folder))
+
     return configs
 
 
-def create_multiindex_dataframe(data):
+def create_multiindex_dataframe(data, temperatures):
     """
     QFI data is given in the shape (n, k, t) where t is the number of temperature samplings.
     Create a DataFrame with MultiIndex (t, k).
     """
     n, k, t = data.shape
     # Create MultiIndex
-    multi_index = pd.MultiIndex.from_product([range(t), range(k)], 
+    multi_index = pd.MultiIndex.from_product([temperatures[1:], range(k)], 
                                              names=['T', 'A'])
     
     # Reshape data to match MultiIndex
