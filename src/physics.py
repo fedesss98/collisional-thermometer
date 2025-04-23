@@ -3,6 +3,7 @@ Physics module, this stores all the physics related functions and classes
 """
 import numpy as np
 import qutip as qt
+from .circuits import Circuit
 
 class PhysicsObject:
     def __init__(self, config):
@@ -15,7 +16,10 @@ class PhysicsObject:
         self.environment_coupling = config['environment']['g']
         self.ancillas_coupling = config['ancilla']['g']
 
-        self.gamma_d = config['environment']['gamma']  # Dissipation rate    
+        self.gamma_d = config['environment']['gamma']  # Dissipation rate
+
+        # Add Circuit object for drawing functionalities
+        self.circuit = Circuit(config['ancilla']['layers'], config['ancilla']['chains'])
 
     @property
     def system(self):
