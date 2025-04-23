@@ -1,8 +1,23 @@
 img/
-notebooks/
-results/
+results/ 
 
+# Jupyter Notebook
+.ipynb_checkpoints
+notebooks/
+
+# Python virtual environments
 .venv/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ruff
+.ruff_cache/
+
+# LSP config files
+pyrightconfig.json
 
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
